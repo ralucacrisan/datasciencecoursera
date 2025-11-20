@@ -1,1 +1,327 @@
 
+#--
+#title: "Forecast daily bike rental demand using time series models"
+#date: "`r Sys.Date()`"
+#output: html_document
+#author: "Raluca Crisan"
+#---
+  
+# About Data Analysis Report
+  
+# This RMarkdown file contains the report of the data analysis done for the project on forecasting daily bike rental demand using time series models in R. It contains analysis such as data exploration, summary statistics and building the time series models. The final report was completed on `r date()`. 
+
+#**Data Description:**
+  
+# This dataset contains the daily count of rental bike transactions between years 2011 and 2012 in Capital bikeshare system with the corresponding weather and seasonal information.
+
+#**Data Source:** https://archive.ics.uci.edu/ml/datasets/bike+sharing+dataset
+
+
+#**Relevant Paper:** 
+
+#Fanaee-T, Hadi, and Gama, Joao, 'Event labeling combining ensemble detectors and background knowledge', Progress in Artificial Intelligence (2013): pp. 1-15, Springer Berlin Heidelberg
+
+
+# Task One: Load and explore the data
+
+## Load data and install packages
+
+## Import required packages
+
+# to do - update / install if needed 
+
+rm(list = ls())
+
+library(timetk)
+library(ggplot2)
+library(stats)
+library(tidyverse)
+library(tseries)
+library(dplyr)
+library(forecast)
+library(lubridate)
+
+## Describe and explore the data
+
+# Import data 
+
+data("bike_sharing_daily") 
+
+# Visualize first 10 recordings 
+
+head(bike_sharing_daily, 10)
+
+# check the class 
+
+class(bike_sharing_daily)
+
+# view a statistical summary of data
+
+summary(bike_sharing_daily)
+
+# visualization - boxplot just to see how is the temperature related to seasons 
+
+boxplot(subset(bike_sharing_daily, season == 1)$temp,
+        subset(bike_sharing_daily, season == 2)$temp,
+        subset(bike_sharing_daily, season == 3)$temp,
+        subset(bike_sharing_daily, season == 4)$temp,
+        col = c("lightgreen", "pink", "orange", "lightblue"),
+        xlab = "Spring - Summer -Fall - Winter",
+        ylab = "Temperature")
+
+# we can see that the temperature in higher in the summer and autumn especially 
+# next we'll take a look at the mean of number of rented bikes for each season 
+
+tapply(bike_sharing_daily$cnt, bike_sharing_daily$season, mean)
+
+# again, we can see that the mean of rented bikes is higher for the season with higher temperature 
+# next, we will check to see if the number of rented bikes is correlated to the temperature across the year
+
+cor(bike_sharing_daily$temp, bike_sharing_daily$cnt)
+
+# we can see that the correlation between temperature and number of rented bike is strong, positive (0,627494)
+#a plot to see the relationship between the number of bikes rented and temperature 
+
+ggplot(bike_sharing_daily, aes(x = temp, y = cnt)) +
+  geom_point(alpha = 0.5, color = "steelblue") +            #points
+  geom_smooth(method = "lm", se = FALSE, color = "red") +   #linear regression line 
+  labs(
+    title = "Correlation between temperature and number of bycicles rented",
+    x = "Temperature (temp)",
+    y = "Number of bycicles (cnt)"
+  ) +
+  theme_minimal()
+
+#the plot shows us the same relationship, but we can also see some outliers 
+#next we'll take a look at the mean of number of rented bikes for each season, starting with spring  
+
+tapply(bike_sharing_daily$cnt, bike_sharing_daily$season, mean)
+
+#again, we cand see that the mean of rented bikes is higher for the season with higher temperature 
+#now, we'll take a look at the outliers for each season
+
+ggplot(bike_sharing_daily, aes(x = factor(season), y = cnt)) +
+  geom_boxplot(fill = "grey", alpha = 0.6, outlier.color = "red") +
+  labs(
+    title = "Boxplot -number of rented bycicles for each season, starting with spring",
+    x = "Season",
+    y = "Number of bycicles (cnt)"
+  ) +
+  theme_minimal()
+
+#we can see two clear outliers in the spring and in the winter, 2 days with very high / very low numbers
+#so the relationship between season (and temperature respectively) is simpler in summer and autumn  
+#next step is to analyze the impact of holiday and temperature on the number of rented bycicles, \
+#and to analyze the outliers in order to decide what kind of smoothing we'll cho
+
+bike_sharing_daily <- bike_sharing_daily %>%
+  mutate(
+    holiday_flag = if_else(
+      dteday %in% as.Date(c("2011-12-25", "2012-12-25",  # Christmas 
+                           "2011-01-01", "2012-01-01")), 1, 0
+    ),
+    weekend_flag = if_else(wday(dteday) %in% c(1,7), 1, 0) # 1=Sunday, 7=Saturday
+  )
+
+ggplot(bike_sharing_daily, aes(x = temp, y = cnt, color = factor(holiday_flag))) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm") +
+  labs(color = "Holiday", title = "The Effect of Temperature and Holidays on Rented Bykes")
+
+model <- lm(cnt ~ temp + holiday_flag + weekend_flag, data = bike_sharing_daily)
+summary(model)
+
+# this is a statistically significant model 
+# temperature variations explain best the fluctuations in the  number of rented bikes 
+# the number of rented bykes drops on holidays 
+
+# next step, convert data to time series 
+
+ts_data <- ts(bike_sharing_daily$cnt, start = c(2011,1), frequency = 7)
+
+head(ts_data)
+
+#plot time series 
+
+# Task Two: Create interactive time series plots
+
+#ts_data if we want to take a look at it   ?!?!? but I used bike sharing daily 
+
+bike_sharing_daily %>% 
+  plot_time_series(dteday, cnt, 
+                   .interactive = TRUE,
+                   .plotly_slider = TRUE)
+
+bike_sharing_daily%>%
+plot_seasonal_diagnostics(dteday, cnt, 
+                          .interactive = FALSE)
+
+# upward trend with yearly seasonality
+
+# we can see from the plot that the number of rented bikes goes up in warm seasons and back down when it gets cold outside 
+
+# we can also see that the number of rented bikes was higher in 2012 compared to 2011
+
+# we can see a few outliers 
+
+
+# Task Three: Smooth time series data - 
+
+# we'll do that with Holt Winters because TS has trend (upward) and seasonality - it seems the most appropriate choice 
+
+# just to be sure we have time series - check
+
+class(ts_data)
+
+# check for missing values 
+
+any(is.na(bike_sharing_daily$cnt))
+
+# no missing values, so no tsclean() needed 
+
+# because we have outliers (we've seen it a few good times) we'll use tsoutliers(), smooth with Holt Winters and SMA(?!?) and compare the results - choose the best one 
+
+# also, sezonalitatea este multiplicativa -  amplitudinea creste cu nivelul - cred!!
+
+#informed decision 
+
+#TS doesn't have missing values 
+
+#copiaza dupa example in ?tsoutliers 
+
+tsoutliers(ts_data)
+
+outliers <- tsoutliers(ts_data)
+
+ts_data_clean <- ts_data
+
+ts_data_clean[outliers$index] <- outliers$replacements
+
+par(mfrow = c(2, 1))  # 2 plots in the same window, for comparison
+
+plot(ts_data, main = "Original Time Series", col = "blue")
+
+points(time(ts_data)[outliers$index], ts_data[outliers$index], col = "red", pch = 19)
+
+plot(ts_data_clean, main = " Cleaned Time Series - ouliers replaced", col = "darkgreen")
+
+# 1. Holt Winters smoothing
+
+holt_winters_model <- HoltWinters(ts_data_clean)
+
+ts_Holt_Winters_smooth <- holt_winters_model$fitted[,1]
+
+plot(ts_data_clean, main = " Holt-Winters Smoothing", col = "gray", lwd = 1.5)
+
+lines(ts_Holt_Winters_smooth, col = "blue", lwd = 2)
+
+legend("topleft",
+       legend = c("TS without outliers", " Holt-Winters Smoothed"),
+       col = c("gray", "blue"), lwd = 2)
+
+
+# 2. ETS Model (Exponential Smoothing)
+
+ets_model <- ets(ts_data_clean)
+
+plot(fitted(ets_model), type = "l", col = "darkgreen", lwd = 2,
+     main = "Model ETS (Exponential Smoothing) pe seria curățată",
+     ylab = "Valori netezite", xlab = "Timp")
+lines(ts_data_clean, col = "gray")
+legend("topleft", legend = c("Seria originală", "ETS netezit"),
+       col = c("gray", "darkgreen"), lwd = 2)
+
+#check which smoothing has better results 
+
+accuracy(holt_winters_model$fitted[,1], ts_data_clean)
+
+accuracy(fitted(ets_model), ts_data_clean)
+
+mean((ts_data_clean - holt_winters_model$fitted[,1])^2)
+
+mean((ts_data_clean - fitted(ets_model))^2)
+
+# ets is a little bit better so we keep it
+
+
+# Task Four: Decompse and access the stationarity of time series data
+
+#check for stationarity ... just to 
+
+# select / extract smoothed series
+
+ts_ets_smooth <- fitted(ets_model)
+
+#  ADF on smoothed series
+
+adf.test(ts_ets_smooth, alternative = "stationary")
+
+# of course, it is not stationary 
+
+# differencing the (ETS) smoothed TS
+
+ts_diff <- diff(ts_ets_smooth, differences = 1)
+
+# ADF test for stationarity 
+
+adf.test(ts_diff, alternative = "stationary")
+
+#TS is stationary now, appropriate for ARIMA modeling
+
+# visualization 
+
+par(mfrow = c(1, 1)) #one plot
+
+plot(ts_diff, main = "ETS differenced", col = "pink")
+
+# Task Five: Fit and forecast time series data using ARIMA models
+
+fit_arima <- auto.arima(ts_diff)
+
+# Model Summary
+
+summary(fit_arima)
+
+# Residuals Diagnostics
+
+checkresiduals(fit_arima)
+
+# Check to see if we can find a better model 
+
+fit_arima_seasonal <- auto.arima(ts_diff, seasonal = TRUE)
+
+# this model's summary
+
+summary(fit_arima_seasonal)
+
+# ... and residuals 
+
+checkresiduals(fit_arima_seasonal)
+
+# ... keep looking 
+
+fit_arima_seasonal_adjust <- auto.arima(ts_diff, seasonal = TRUE, stepwise = FALSE, approximation = FALSE)
+
+summary(fit_arima_seasonal_adjust)
+
+checkresiduals(fit_arima_seasonal_adjust)
+
+# this model, the third is the best for forecast 
+
+# visualizing forecast 
+
+forecast_arima <- forecast(fit_arima_seasonal_adjust, h = 12)
+
+plot(forecast_arima, main = " ARIMA Forecast")
+
+# Task Six: Findings and Conclusions
+
+#First look at the data - plot - it has a trend, upward, seasonality - because of different temperatures in different seasons and a few outliers
+
+#Time series has a few outliers, we replaced that 
+
+#The smoothing with best numbers for this TS is ets
+
+#Time series is not stationary so it needed differencing.
+
+#Best ARIMA I found is  ARIMA(2,0,1)(2,0,0)[7] with 0 mean.
